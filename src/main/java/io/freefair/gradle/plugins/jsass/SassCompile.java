@@ -10,9 +10,13 @@ import io.bit3.jsass.importer.Importer;
 import lombok.Getter;
 import lombok.Setter;
 import org.codehaus.groovy.runtime.ResourceGroovyMethods;
-import org.gradle.api.file.*;
+import org.gradle.api.file.ConfigurableFileTree;
+import org.gradle.api.file.FileCollection;
+import org.gradle.api.file.FileTree;
 import org.gradle.api.internal.ConventionTask;
 import org.gradle.api.tasks.*;
+import org.gradle.api.tasks.incremental.IncrementalTaskInputs;
+import org.gradle.api.tasks.incremental.InputFileDetails;
 
 import java.io.File;
 import java.io.IOException;
@@ -24,24 +28,23 @@ import java.util.List;
 
 /**
  * @author Lars Grefer
+ * @author Pat Lackemacher
  */
 @Getter
 @Setter
 public class SassCompile extends ConventionTask {
 
     @InputFiles
-    protected FileTree getSourceFiles() {
+    public FileTree getSourceFiles() {
         ConfigurableFileTree files = getProject().fileTree(new File(sourceDir, sassPath));
-        files.include(fileTreeElement -> fileTreeElement.getName().endsWith(".scss"));
-        files.include(fileTreeElement -> fileTreeElement.getName().endsWith(".sass"));
+        files.include("**/*.scss", "**/*.sass");
         return files;
     }
 
     @OutputFiles
-    protected FileTree getOutputFiles() {
-        ConfigurableFileTree files = getProject().fileTree(new File(destinationDir, cssPath));
-        files.include(fileTreeElement -> fileTreeElement.getName().endsWith(".css"));
-        files.include(fileTreeElement -> fileTreeElement.getName().endsWith(".css.map"));
+    public FileTree getOutputFiles() {
+        ConfigurableFileTree files = getProject().fileTree(new File(getDestinationDir(), cssPath));
+        files.include("**/*.css", "**/*.css.map");
         return files;
     }
 
@@ -57,99 +60,176 @@ public class SassCompile extends ConventionTask {
     @Input
     private String sassPath = "";
 
-    @TaskAction
-    public void compileSass() {
-        Compiler compiler = new Compiler();
-        Options options = new Options();
+    @Internal
+    private Compiler compiler;
 
-        options.setFunctionProviders(new ArrayList<>(getFunctionProviders()));
-        options.getFunctionProviders().add(new LoggingFunctionProvider());
-        options.setHeaderImporters(getHeaderImporters());
-        options.setImporters(getImporters());
-        if (getIncludePaths() != null) {
-            options.setIncludePaths(new ArrayList<>(getIncludePaths().getFiles()));
-        }
-        options.setIndent(getIndent());
-        options.setLinefeed(getLinefeed());
-        options.setOmitSourceMapUrl(isOmitSourceMapUrl());
-        options.setOutputStyle(getOutputStyle());
-        options.setPluginPath(getPluginPath());
-        options.setPrecision(getPrecision());
-        options.setSourceComments(isSourceComments());
-        options.setSourceMapContents(isSourceMapContents());
-        options.setSourceMapEmbed(isSourceMapEmbed());
-        options.setSourceMapRoot(getSourceMapRoot());
+    @Internal
+    private Options options;
 
-        File realSourceDir = new File(sourceDir, sassPath);
+    private void handleOutOfDate(InputFileDetails inputFileDetails) {
+        Compiler compiler = getCompilerInstance();
+        Options options = getOptionsInstance();
 
-        File fakeDestinationDir = new File(sourceDir, cssPath);
+        File file = inputFileDetails.getFile();
+
+        if (isSassPartialFile(file) || !isSassFile(file))
+            return;
+
+        String sourceSetFilePath = createSourceSetFilePath(inputFileDetails);
+
         File realDestinationDir = new File(getDestinationDir(), cssPath);
+        File cssOutput = new File(realDestinationDir, sourceSetFilePath + ".css");
 
-        getProject().fileTree(realSourceDir).visit(new FileVisitor() {
-            @Override
-            public void visitDir(FileVisitDetails fileVisitDetails) {
+        options.setIsIndentedSyntaxSrc(file.getName().endsWith(".sass"));
 
+        File tempCssMapOutput = null;
+        boolean sourceMapEnabled = isSourceMapEnabled();
+        if (sourceMapEnabled) {
+            tempCssMapOutput = createTempFile(sourceSetFilePath, "css.map");
+
+            options.setSourceMapFile(tempCssMapOutput.toURI());
+        } else {
+            options.setSourceMapFile(null);
+        }
+
+        try {
+            URI inputPath = file.getAbsoluteFile().toURI();
+
+            File tempCssOutput = createTempFile(sourceSetFilePath, "css");
+
+            Output output = compiler.compileFile(inputPath, tempCssOutput.toURI(), options);
+
+            deleteAndWarnIfFailed(tempCssOutput);
+
+            if (cssOutput.getParentFile().exists() || cssOutput.getParentFile().mkdirs()) {
+                ResourceGroovyMethods.write(cssOutput, output.getCss());
+            } else {
+                getLogger().error("Cannot write into {}", cssOutput.getParentFile());
+                throw new TaskExecutionException(this, null);
             }
 
-            @Override
-            public void visitFile(FileVisitDetails fileVisitDetails) {
-                String name = fileVisitDetails.getName();
-                if (name.startsWith("_"))
-                    return;
+            if (sourceMapEnabled) {
+                deleteAndWarnIfFailed(tempCssMapOutput);
 
-                if (name.endsWith(".scss") || name.endsWith(".sass")) {
-                    File in = fileVisitDetails.getFile();
+                File cssMapOutput = new File(realDestinationDir, sourceSetFilePath + ".css.map");
 
-                    String pathString = fileVisitDetails.getRelativePath().getPathString();
-
-                    pathString = pathString.substring(0, pathString.length() - 5) + ".css";
-
-                    File realOut = new File(realDestinationDir, pathString);
-                    File fakeOut = new File(fakeDestinationDir, pathString);
-                    File realMap = new File(realDestinationDir, pathString + ".map");
-                    File fakeMap = new File(fakeDestinationDir, pathString + ".map");
-
-                    options.setIsIndentedSyntaxSrc(name.endsWith(".sass"));
-
-                    if(isSourceMapEnabled()) {
-                        options.setSourceMapFile(fakeMap.toURI());
-                    } else {
-                        options.setSourceMapFile(null);
-                    }
-
-                    try {
-                        URI inputPath = in.getAbsoluteFile().toURI();
-
-                        Output output = compiler.compileFile(inputPath, fakeOut.toURI(), options);
-
-                        if (realOut.getParentFile().exists() || realOut.getParentFile().mkdirs()) {
-                            ResourceGroovyMethods.write(realOut, output.getCss());
-                        } else {
-                            getLogger().error("Cannot write into {}", realOut.getParentFile());
-                            throw new TaskExecutionException(SassCompile.this, null);
-                        }
-                        if (isSourceMapEnabled()) {
-                            if (realMap.getParentFile().exists() || realMap.getParentFile().mkdirs()) {
-                                ResourceGroovyMethods.write(realMap, output.getSourceMap());
-                            } else {
-                                getLogger().error("Cannot write into {}", realMap.getParentFile());
-                                throw new TaskExecutionException(SassCompile.this, null);
-                            }
-                        }
-                    } catch (CompilationException e) {
-                        SassError sassError = new Gson().fromJson(e.getErrorJson(), SassError.class);
-
-                        getLogger().error("{}:{}:{}", sassError.getFile(), sassError.getLine(), sassError.getColumn());
-                        getLogger().error(e.getErrorMessage());
-
-                        throw new TaskExecutionException(SassCompile.this, e);
-                    } catch (IOException e) {
-                        getLogger().error(e.getLocalizedMessage());
-                        throw new TaskExecutionException(SassCompile.this, e);
-                    }
+                if (cssMapOutput.getParentFile().exists() || cssMapOutput.getParentFile().mkdirs()) {
+                    ResourceGroovyMethods.write(cssMapOutput, output.getSourceMap());
+                } else {
+                    getLogger().error("Cannot write into {}", cssMapOutput.getParentFile());
+                    throw new TaskExecutionException(this, null);
                 }
             }
-        });
+        } catch (CompilationException e) {
+            SassError sassError = new Gson().fromJson(e.getErrorJson(), SassError.class);
+
+            getLogger().error("{}:{}:{}", sassError.getFile(), sassError.getLine(), sassError.getColumn());
+            getLogger().error(e.getErrorMessage());
+
+            throw new TaskExecutionException(this, e);
+        } catch (IOException e) {
+            getLogger().error(e.getLocalizedMessage());
+            throw new TaskExecutionException(this, e);
+        }
+    }
+
+    private void handleRemoved(InputFileDetails inputFileDetails) {
+        String sourceSetFilePath = createSourceSetFilePath(inputFileDetails);
+
+        File realDestinationDir = new File(getDestinationDir(), cssPath);
+        File cssOutput = new File(realDestinationDir, sourceSetFilePath + ".css");
+        File cssMapOutput = new File(realDestinationDir, sourceSetFilePath + ".css.map");
+
+        deleteAndWarnIfFailed(cssOutput);
+        deleteAndWarnIfFailed(cssMapOutput);
+    }
+
+    @TaskAction
+    public void compileSass(IncrementalTaskInputs inputs) {
+        if (!inputs.isIncremental()) {
+            getProject().delete(getOutputFiles().getFiles());
+        }
+
+        inputs.outOfDate(this::handleOutOfDate);
+        inputs.removed(this::handleRemoved);
+
+        resetCompilerRelatedInstances();
+    }
+
+    private void deleteAndWarnIfFailed(File file) {
+        if (file != null && !file.delete()) {
+            getLogger().info("Unable to delete file {}", file);
+        }
+    }
+
+    private String createSourceSetFilePath(InputFileDetails inputFileDetails) {
+        String filePath = inputFileDetails.getFile().getAbsolutePath();
+
+        return filePath.substring(0, filePath.length() - 5)
+                .replace(getFinalSourceDirPath(), "");
+    }
+
+    @Internal
+    private String getFinalSourceDirPath() {
+        return new File(sourceDir, sassPath).getAbsolutePath();
+    }
+
+    private File createTempFile(String baseFilePath, String suffix) {
+        try {
+            return File.createTempFile(baseFilePath, suffix);
+        } catch (IOException e) {
+            throw new TaskExecutionException(this, e);
+        }
+    }
+
+    private static boolean isSassPartialFile(File file) {
+        return file.getName().startsWith("_");
+    }
+
+    private static boolean isSassFile(File file) {
+        String name = file.getName();
+        return name.endsWith(".scss") || name.endsWith(".sass");
+    }
+
+    @Internal
+    private Compiler getCompilerInstance() {
+        if (compiler == null) {
+            compiler = new Compiler();
+        }
+
+        return compiler;
+    }
+
+    @Internal
+    private Options getOptionsInstance() {
+        if (options == null) {
+            options = new Options();
+
+            options.setFunctionProviders(new ArrayList<>(getFunctionProviders()));
+            options.getFunctionProviders().add(new LoggingFunctionProvider());
+            options.setHeaderImporters(getHeaderImporters());
+            options.setImporters(getImporters());
+            if (getIncludePaths() != null) {
+                options.setIncludePaths(new ArrayList<>(getIncludePaths().getFiles()));
+            }
+            options.setIndent(getIndent());
+            options.setLinefeed(getLinefeed());
+            options.setOmitSourceMapUrl(isOmitSourceMapUrl());
+            options.setOutputStyle(getOutputStyle());
+            options.setPluginPath(getPluginPath());
+            options.setPrecision(getPrecision());
+            options.setSourceComments(isSourceComments());
+            options.setSourceMapContents(isSourceMapContents());
+            options.setSourceMapEmbed(isSourceMapEmbed());
+            options.setSourceMapRoot(getSourceMapRoot());
+        }
+
+        return options;
+    }
+
+    private void resetCompilerRelatedInstances() {
+        compiler = null;
+        options = null;
     }
 
     /**
