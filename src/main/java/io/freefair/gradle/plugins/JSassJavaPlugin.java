@@ -51,6 +51,7 @@ public class JSassJavaPlugin implements Plugin<Project> {
                             }
                         });
 
+                processResources.exclude("**/*.scss", "**/*.sass");
                 processResources.dependsOn(sassCompile);
             }
         });
