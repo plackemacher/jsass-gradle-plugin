@@ -1,10 +1,9 @@
 package io.freefair.gradle.plugins;
 
 import io.freefair.gradle.plugins.jsass.SassCompile;
-import org.gradle.api.Action;
 import org.gradle.api.Project;
-import org.gradle.api.internal.changedetection.changes.RebuildIncrementalTaskInputs;
-import org.gradle.api.tasks.incremental.InputFileDetails;
+import org.gradle.api.internal.changedetection.rules.ChangeType;
+import org.gradle.api.tasks.incremental.IncrementalTaskInputs;
 import org.gradle.internal.impldep.com.google.common.io.Files;
 import org.gradle.testfixtures.ProjectBuilder;
 import org.junit.Before;
@@ -26,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class JSassJavaPluginTest {
 
     private Project project;
+    private SassCompile compileSass;
 
     @Rule
     public final TemporaryFolder testProjectDir = new TemporaryFolder();
@@ -35,6 +35,8 @@ public class JSassJavaPluginTest {
         project = ProjectBuilder.builder()
                 .withProjectDir(testProjectDir.getRoot())
                 .build();
+        project.getPlugins().apply(JSassJavaPlugin.class);
+        compileSass = (SassCompile) project.getTasks().getByName("compileSass");
     }
 
     @Test
@@ -47,37 +49,10 @@ public class JSassJavaPluginTest {
 
         Files.write("body { color: red; }", mainCss, Charset.defaultCharset());
 
-        project.getPlugins().apply(JSassJavaPlugin.class);
-
-        SassCompile compileSass = (SassCompile) project.getTasks().getByName("compileSass");
-
-        RebuildIncrementalTaskInputs incrementalTaskInputs = new RebuildIncrementalTaskInputs(compileSass) {
-            @Override
-            public void doOutOfDate(Action<? super InputFileDetails> outOfDateAction) {
-                getDiscoveredInputs().forEach(file -> outOfDateAction.execute(new InputFileDetails() {
-                    @Override
-                    public boolean isAdded() {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isModified() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isRemoved() {
-                        return false;
-                    }
-
-                    @Override
-                    public File getFile() {
-                        return file;
-                    }
-                }));
-            }
-        };
-        incrementalTaskInputs.newInput(mainCss);
+        IncrementalTaskInputs incrementalTaskInputs = new TestIncrementalTaskInputs.Builder()
+                .setIncremental(true)
+                .addOutOfDateInputFileDetails(new TestInputFileDetails(ChangeType.ADDED, mainCss))
+                .build();
 
         compileSass.compileSass(incrementalTaskInputs);
 
@@ -93,37 +68,10 @@ public class JSassJavaPluginTest {
         File mainCss = new File(cssFolder, rootName + ".scss");
         Files.write("body { color: red; }", mainCss, Charset.defaultCharset());
 
-        project.getPlugins().apply(JSassJavaPlugin.class);
-
-        SassCompile compileSass = (SassCompile) project.getTasks().getByName("compileSass");
-
-        RebuildIncrementalTaskInputs incrementalTaskInputs = new RebuildIncrementalTaskInputs(compileSass) {
-            @Override
-            public void doOutOfDate(Action<? super InputFileDetails> outOfDateAction) {
-                getDiscoveredInputs().forEach(file -> outOfDateAction.execute(new InputFileDetails() {
-                    @Override
-                    public boolean isAdded() {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isModified() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isRemoved() {
-                        return false;
-                    }
-
-                    @Override
-                    public File getFile() {
-                        return file;
-                    }
-                }));
-            }
-        };
-        incrementalTaskInputs.newInput(mainCss);
+        IncrementalTaskInputs incrementalTaskInputs = new TestIncrementalTaskInputs.Builder()
+                .setIncremental(true)
+                .addOutOfDateInputFileDetails(new TestInputFileDetails(ChangeType.ADDED, mainCss))
+                .build();
 
         compileSass.compileSass(incrementalTaskInputs);
 
@@ -138,33 +86,10 @@ public class JSassJavaPluginTest {
         // Change color to blue
         Files.write("body { color: blue; }", mainCss, Charset.defaultCharset());
 
-        incrementalTaskInputs = new RebuildIncrementalTaskInputs(compileSass) {
-            @Override
-            public void doOutOfDate(Action<? super InputFileDetails> outOfDateAction) {
-                getDiscoveredInputs().forEach(file -> outOfDateAction.execute(new InputFileDetails() {
-                    @Override
-                    public boolean isAdded() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isModified() {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isRemoved() {
-                        return false;
-                    }
-
-                    @Override
-                    public File getFile() {
-                        return file;
-                    }
-                }));
-            }
-        };
-        incrementalTaskInputs.newInput(mainCss);
+        incrementalTaskInputs = new TestIncrementalTaskInputs.Builder()
+                .setIncremental(true)
+                .addOutOfDateInputFileDetails(new TestInputFileDetails(ChangeType.MODIFIED, mainCss))
+                .build();
 
         compileSass.compileSass(incrementalTaskInputs);
 
@@ -183,37 +108,10 @@ public class JSassJavaPluginTest {
         File mainCss = new File(cssFolder, rootName + ".scss");
         Files.write("body { color: red; }", mainCss, Charset.defaultCharset());
 
-        project.getPlugins().apply(JSassJavaPlugin.class);
-
-        SassCompile compileSass = (SassCompile) project.getTasks().getByName("compileSass");
-
-        RebuildIncrementalTaskInputs incrementalTaskInputs = new RebuildIncrementalTaskInputs(compileSass) {
-            @Override
-            public void doOutOfDate(Action<? super InputFileDetails> outOfDateAction) {
-                getDiscoveredInputs().forEach(file -> outOfDateAction.execute(new InputFileDetails() {
-                    @Override
-                    public boolean isAdded() {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isModified() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isRemoved() {
-                        return false;
-                    }
-
-                    @Override
-                    public File getFile() {
-                        return file;
-                    }
-                }));
-            }
-        };
-        incrementalTaskInputs.newInput(mainCss);
+        IncrementalTaskInputs incrementalTaskInputs = new TestIncrementalTaskInputs.Builder()
+                .setIncremental(true)
+                .addOutOfDateInputFileDetails(new TestInputFileDetails(ChangeType.ADDED, mainCss))
+                .build();
 
         compileSass.compileSass(incrementalTaskInputs);
 
@@ -227,37 +125,10 @@ public class JSassJavaPluginTest {
         assertThat(mainCss.delete()).isTrue();
         assertThat(mainCss).doesNotExist();
 
-        incrementalTaskInputs = new RebuildIncrementalTaskInputs(compileSass) {
-            @Override
-            public void doRemoved(Action<? super InputFileDetails> removedAction) {
-                getDiscoveredInputs().forEach(file -> removedAction.execute(new InputFileDetails() {
-                    @Override
-                    public boolean isAdded() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isModified() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isRemoved() {
-                        return true;
-                    }
-
-                    @Override
-                    public File getFile() {
-                        return file;
-                    }
-                }));
-            }
-
-            @Override
-            public void doOutOfDate(Action<? super InputFileDetails> outOfDateAction) {
-            }
-        };
-        incrementalTaskInputs.newInput(mainCss);
+        incrementalTaskInputs = new TestIncrementalTaskInputs.Builder()
+                .setIncremental(true)
+                .addRemovedInputFileDetails(new TestInputFileDetails(ChangeType.REMOVED, mainCss))
+                .build();
 
         compileSass.compileSass(incrementalTaskInputs);
 
@@ -276,11 +147,9 @@ public class JSassJavaPluginTest {
         assertThat(cssFile.createNewFile()).isTrue();
         assertThat(cssMapFile.createNewFile()).isTrue();
 
-        project.getPlugins().apply(JSassJavaPlugin.class);
-
-        SassCompile compileSass = (SassCompile) project.getTasks().getByName("compileSass");
-
-        RebuildIncrementalTaskInputs incrementalTaskInputs = new RebuildIncrementalTaskInputs(compileSass);
+        IncrementalTaskInputs incrementalTaskInputs = new TestIncrementalTaskInputs.Builder()
+                .setIncremental(false)
+                .build();
 
         compileSass.compileSass(incrementalTaskInputs);
 

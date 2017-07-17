@@ -7,6 +7,7 @@ import io.bit3.jsass.annotation.DebugFunction;
 import io.bit3.jsass.annotation.ErrorFunction;
 import io.bit3.jsass.annotation.WarnFunction;
 import io.bit3.jsass.importer.Importer;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import org.codehaus.groovy.runtime.ResourceGroovyMethods;
@@ -33,8 +34,9 @@ import java.util.List;
 @Getter
 @Setter
 public class SassCompile extends ConventionTask {
-
     @InputFiles
+    @SkipWhenEmpty
+    @SuppressWarnings("unused")
     public FileTree getSourceFiles() {
         ConfigurableFileTree files = getProject().fileTree(new File(sourceDir, sassPath));
         files.include("**/*.scss", "**/*.sass");
@@ -42,6 +44,7 @@ public class SassCompile extends ConventionTask {
     }
 
     @OutputFiles
+    @SuppressWarnings("unused")
     public FileTree getOutputFiles() {
         ConfigurableFileTree files = getProject().fileTree(new File(getDestinationDir(), cssPath));
         files.include("**/*.css", "**/*.css.map");
@@ -61,9 +64,13 @@ public class SassCompile extends ConventionTask {
     private String sassPath = "";
 
     @Internal
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
     private Compiler compiler;
 
     @Internal
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
     private Options options;
 
     private void handleOutOfDate(InputFileDetails inputFileDetails) {
@@ -99,7 +106,7 @@ public class SassCompile extends ConventionTask {
 
             Output output = compiler.compileFile(inputPath, tempCssOutput.toURI(), options);
 
-            deleteAndWarnIfFailed(tempCssOutput);
+            deleteAndLogIfFailed(tempCssOutput);
 
             if (cssOutput.getParentFile().exists() || cssOutput.getParentFile().mkdirs()) {
                 ResourceGroovyMethods.write(cssOutput, output.getCss());
@@ -109,7 +116,7 @@ public class SassCompile extends ConventionTask {
             }
 
             if (sourceMapEnabled) {
-                deleteAndWarnIfFailed(tempCssMapOutput);
+                deleteAndLogIfFailed(tempCssMapOutput);
 
                 File cssMapOutput = new File(realDestinationDir, sourceSetFilePath + ".css.map");
 
@@ -140,8 +147,8 @@ public class SassCompile extends ConventionTask {
         File cssOutput = new File(realDestinationDir, sourceSetFilePath + ".css");
         File cssMapOutput = new File(realDestinationDir, sourceSetFilePath + ".css.map");
 
-        deleteAndWarnIfFailed(cssOutput);
-        deleteAndWarnIfFailed(cssMapOutput);
+        deleteAndLogIfFailed(cssOutput);
+        deleteAndLogIfFailed(cssMapOutput);
     }
 
     @TaskAction
@@ -156,7 +163,7 @@ public class SassCompile extends ConventionTask {
         resetCompilerRelatedInstances();
     }
 
-    private void deleteAndWarnIfFailed(File file) {
+    private void deleteAndLogIfFailed(File file) {
         if (file != null && !file.delete()) {
             getLogger().info("Unable to delete file {}", file);
         }
@@ -166,7 +173,7 @@ public class SassCompile extends ConventionTask {
         String filePath = inputFileDetails.getFile().getAbsolutePath();
 
         return filePath.substring(0, filePath.length() - 5)
-                .replace(getFinalSourceDirPath(), "");
+                .replaceFirst(getFinalSourceDirPath(), "");
     }
 
     @Internal
